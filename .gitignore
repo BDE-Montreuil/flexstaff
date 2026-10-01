@@ -2,3 +2,6 @@ node_modules/
 .env*
 supabase/.temp/
 supabase/.branches/
+.next/
+next-env.d.ts
+*.tsbuildinfo
