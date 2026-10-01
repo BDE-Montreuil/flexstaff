@@ -13,7 +13,7 @@ Ce dépôt contient :
 - **tout le SQL de la base** partagée (`supabase/migrations/`) : tables de chaque appli, règles de
   sécurité et droits communs. Les autres dépôts ne contiennent pas de schéma ;
 - les scripts de gestion des comptes (`npm run role`) et de test des droits (`npm run test:rls`) ;
-- l'appli Flexstaff (à venir) : ajouter du staff et transmettre le rôle admin depuis une interface.
+- l'appli Flexstaff : ajouter du staff et transmettre le rôle admin depuis une interface.
 
 ## Droits
 
@@ -73,6 +73,52 @@ npm run test:rls
 `scripts/rls-e2e.mjs` vérifie chaque règle directement dans la base, avec le jeton de chaque rôle
 (visiteur, staff et admin Flexform, admin Flexfolio, super admin). Il refuse de tourner sur une autre
 base que la base locale. `npm run db:reset` repart d'une base vide, `npm run db:stop` l'arrête.
+
+## L'appli Flexstaff
+
+Réservée aux admins d'au moins une appli de la suite (un compte staff ou sans rôle est refusé à la
+connexion). Chaque admin ne voit que les applis qu'il administre ; un super admin les voit toutes.
+
+- ajouter un membre par e-mail, en `admin` ou `staff` : un compte qui n'existe pas est créé, avec un mot
+  de passe provisoire affiché une seule fois ;
+- promouvoir, rétrograder ou retirer un membre ;
+- transmettre son rôle admin à un membre : il devient admin, l'ancien admin devient staff (un super admin
+  le reste) ;
+- les super admins apparaissent dans chaque équipe mais ne se gèrent qu'en SQL.
+
+La base décide de tout avec le jeton du compte connecté (fonctions `suite_*`, RLS de `app_roles`) ; elle
+refuse de retirer le dernier admin d'une appli quand aucun super admin n'existe. Les droits sont relus à
+chaque requête : un admin rétrogradé perd l'accès aussitôt. La clé `service_role` ne sert qu'à créer un
+compte (après vérification du rôle avec le jeton du compte) et à limiter les tentatives.
+
+### Lancer
+
+Avec la base locale et le `.env` décrits plus haut :
+
+```bash
+npm run dev
+```
+
+Ouvre http://localhost:8786. `npm run build` puis `npm start` pour la version de production (même port).
+
+### Tester
+
+Avec l'appli lancée et la base locale :
+
+```bash
+node --env-file=.env scripts/app-e2e.mjs http://localhost:8786
+```
+
+`scripts/app-e2e.mjs` vérifie chaque route (connexion, équipe, ajout, rôles, transmission), dont les cas
+refusés. Il crée puis supprime un compte de test et remet les rôles comme au départ.
+
+### Variables d'environnement
+
+| Variable | Rôle |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY` | Projet Supabase (les noms `NEXT_PUBLIC_*` marchent aussi) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Clé serveur : création de comptes et limite de tentatives |
+| `TEST_*` | Comptes de test, pour `npm run test:rls` et `scripts/app-e2e.mjs` uniquement |
 
 ## Nouvelle appli
 

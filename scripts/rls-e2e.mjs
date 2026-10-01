@@ -2,9 +2,12 @@
  * Vérifie les droits de la suite directement dans la base, avec le jeton de chaque rôle :
  * visiteur, staff Flexform, admin Flexform, admin Flexfolio, super admin.
  * Base LOCALE uniquement (npm run db:start) : le test crée et supprime des données.
+ * La garde du dernier admin est testée en SQL dans le conteneur Docker de la base, dans des transactions annulées.
  *
  *   npm run test:rls
  */
+import { spawnSync } from "node:child_process";
+
 const { SUPABASE_URL: SB, SUPABASE_ANON_KEY: ANON, SUPABASE_SERVICE_ROLE_KEY: SERVICE } = process.env;
 if (!SB?.includes("127.0.0.1") && !SB?.includes("localhost")) {
   console.error("Refusé : SUPABASE_URL ne pointe pas vers une base locale.");
@@ -51,6 +54,18 @@ async function upload(bearer, name) {
   });
   return res.status;
 }
+
+/** Joue des requêtes SQL dans une transaction toujours annulée, en superutilisateur dans le conteneur de la base locale. */
+function sqlRolledBack(lines) {
+  const sql = ["begin;", ...lines, "rollback;"].join("\n");
+  const r = spawnSync("docker", ["exec", "-i", "supabase_db_flexstaff", "psql", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=verbose"], { input: sql, encoding: "utf8" });
+  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error?.message ?? ""}` };
+}
+/** Requêtes suivantes jouées comme ce compte connecté (même rôle et même auth.uid() qu'avec son jeton). */
+const asUser = (who) => [
+  "set local role authenticated;",
+  `select set_config('request.jwt.claims', '${JSON.stringify({ sub: who.id, role: "authenticated" })}', true);`,
+];
 
 const env = process.env;
 const staff = await token(env.TEST_STAFF_EMAIL, env.TEST_STAFF_PASSWORD);
@@ -102,6 +117,65 @@ const demote = await rest(formAdmin.jwt, `app_roles?user_id=eq.${staff.id}&app=e
 check("admin Flexform rétrograde un admin en staff", demote.data?.[0]?.role === "staff");
 check("super admin gère aussi les droits de Flexfolio", !refused(await rest(superAdmin.jwt, `app_roles?user_id=eq.${folioAdmin.id}&app=eq.flexfolio`, { method: "PATCH", body: { role: "admin" }, prefer: "return=representation" })));
 
+console.log("\n# Équipe (Flexstaff)");
+for (const [fn, args] of [["suite_my_apps", {}], ["suite_team", { p_app: "flexform" }], ["suite_user_id_by_email", { p_email: env.TEST_STAFF_EMAIL }]]) {
+  const r = await rpc(ANON, fn, args);
+  check(`visiteur ne peut pas appeler ${fn}`, r.status >= 400, `${r.status}`);
+}
+const myApps = async (who) => (await rpc(who.jwt, "suite_my_apps")).data.map((a) => a.app).sort().join(",");
+const allApps = (await rest(SERVICE, "suite_apps?select=app")).data.map((a) => a.app).sort().join(",");
+check("admin Flexform ne gère que flexform", (await myApps(formAdmin)) === "flexform");
+check("admin Flexfolio ne gère que flexfolio", (await myApps(folioAdmin)) === "flexfolio");
+check("staff Flexform ne gère aucune appli", (await myApps(staff)) === "");
+check("super admin gère toutes les applis", (await myApps(superAdmin)) === allApps, allApps);
+
+const team = await rpc(formAdmin.jwt, "suite_team", { p_app: "flexform" });
+const roleIn = (id) => team.data?.filter?.((m) => m.user_id === id).map((m) => m.role).join(",");
+check("admin Flexform lit l'équipe de flexform", team.status === 200 && roleIn(formAdmin.id) === "admin" && roleIn(staff.id) === "staff", JSON.stringify(team));
+check("l'équipe liste chaque super admin une fois, avec le rôle super", roleIn(superAdmin.id) === "super");
+check("l'équipe de flexform ne contient pas les droits de flexfolio", team.data?.every?.((m) => m.user_id !== folioAdmin.id));
+check("staff Flexform ne peut pas lire l'équipe de flexform", (await rpc(staff.jwt, "suite_team", { p_app: "flexform" })).status === 403);
+check("admin Flexform ne peut pas lire l'équipe de flexfolio", (await rpc(formAdmin.jwt, "suite_team", { p_app: "flexfolio" })).status === 403);
+check("équipe refusée quand l'appli est inconnue, même pour un super admin", (await rpc(superAdmin.jwt, "suite_team", { p_app: "inconnue" })).status === 404);
+
+check("staff Flexform ne peut pas chercher un compte par e-mail", (await rpc(staff.jwt, "suite_user_id_by_email", { p_email: env.TEST_ADMIN_EMAIL })).status === 403);
+const found = await rpc(formAdmin.jwt, "suite_user_id_by_email", { p_email: ` ${env.TEST_STAFF_EMAIL.toUpperCase()} ` });
+check("admin Flexform retrouve un compte par e-mail (casse et espaces ignorés)", found.data === staff.id, JSON.stringify(found));
+
+await rest(SERVICE, "suite_rate_limits?key=like.rls-*", { method: "DELETE" });
+const hit = async () => (await rpc(SERVICE, "suite_hit_rate_limit", { p_key: "rls-limite", p_window_seconds: 60 })).data;
+check("le serveur (service_role) compte les tentatives", (await hit()) === 1 && (await hit()) === 2);
+for (const [who, label] of [[{ jwt: ANON }, "visiteur"], [staff, "staff Flexform"], [superAdmin, "super admin"]]) {
+  const call = await rpc(who.jwt, "suite_hit_rate_limit", { p_key: "rls-limite", p_window_seconds: 60 });
+  check(`${label} ne peut pas appeler suite_hit_rate_limit`, call.status >= 400, `${call.status}`);
+  const read = await rest(who.jwt, "suite_rate_limits?select=*");
+  check(`${label} ne lit rien dans suite_rate_limits`, read.status >= 400 || read.data.length === 0, `${read.status}`);
+  check(`${label} ne peut pas écrire dans suite_rate_limits`, refused(await rest(who.jwt, "suite_rate_limits", { method: "POST", body: { key: "rls-pirate", hits: 0, reset_at: "2100-01-01T00:00:00Z" }, prefer: "return=representation" })));
+  check(`${label} ne peut pas remettre un compteur à zéro`, refused(await rest(who.jwt, "suite_rate_limits?key=eq.rls-limite", { method: "DELETE", prefer: "return=representation" })));
+}
+check("le compteur n'a pas bougé", (await hit()) === 3);
+
+console.log("\n# Garde du dernier admin");
+// Appli de test créée dans chaque transaction, puis annulée : les comptes de test et les super admins ne changent pas.
+const garde = (roles) => [
+  "insert into public.suite_apps (app, name) values ('rls-garde', 'Garde');",
+  `insert into public.app_roles (user_id, app, role) values ${roles.map(([who, role]) => `('${who.id}', 'rls-garde', '${role}')`).join(", ")};`,
+];
+const lastAdmin = (r) => !r.ok && r.out.includes("PT409") && r.out.includes("Il doit rester au moins un admin dans cette appli.");
+const noSuper = "delete from public.suite_super_admins;";
+const superBefore = (await rest(SERVICE, "suite_super_admins?select=user_id")).data.length;
+let r = sqlRolledBack([...garde([[formAdmin, "admin"], [staff, "staff"]]), noSuper, ...asUser(formAdmin), "update public.app_roles set role = 'staff' where user_id = auth.uid() and app = 'rls-garde';"]);
+check("dernier admin ne peut pas se rétrograder quand aucun super admin n'existe", lastAdmin(r), r.out);
+r = sqlRolledBack([...garde([[formAdmin, "admin"], [staff, "staff"]]), noSuper, ...asUser(formAdmin), "delete from public.app_roles where user_id = auth.uid() and app = 'rls-garde';"]);
+check("dernier admin ne peut pas retirer son droit quand aucun super admin n'existe", lastAdmin(r), r.out);
+r = sqlRolledBack([...garde([[formAdmin, "admin"], [staff, "admin"]]), noSuper, ...asUser(formAdmin), "update public.app_roles set role = 'staff' where user_id = auth.uid() and app = 'rls-garde';"]);
+check("un admin se rétrograde quand un autre admin reste, sans super admin", r.ok && r.out.includes("UPDATE 1"), r.out);
+r = sqlRolledBack([...garde([[formAdmin, "admin"]]), ...asUser(formAdmin), "update public.app_roles set role = 'staff' where user_id = auth.uid() and app = 'rls-garde';"]);
+check("le dernier admin se rétrograde quand un super admin existe", r.ok && r.out.includes("UPDATE 1"), r.out);
+r = sqlRolledBack([...garde([[formAdmin, "admin"]]), ...asUser(superAdmin), `delete from public.app_roles where user_id = '${formAdmin.id}' and app = 'rls-garde';`]);
+check("super admin retire le dernier admin d'une appli", r.ok && r.out.includes("DELETE 1"), r.out);
+check("la garde ne laisse rien en base", (await rest(SERVICE, "suite_apps?app=eq.rls-garde")).data.length === 0 && (await rest(SERVICE, "suite_super_admins?select=user_id")).data.length === superBefore);
+
 console.log("\n# Flexfolio");
 const visibleTo = async (bearer) => (await rest(bearer, "projects?select=slug&slug=like.rls-*")).data.map((p) => p.slug).sort().join(",");
 check("visiteur voit seulement le projet visible", (await visibleTo(ANON)) === "rls-visible");
@@ -126,6 +200,7 @@ check("admin Flexfolio ne lit pas les participants de Flexform", (await rest(fol
 
 // Nettoyage
 await rest(SERVICE, "projects?slug=like.rls-*", { method: "DELETE" });
+await rest(SERVICE, "suite_rate_limits?key=like.rls-*", { method: "DELETE" });
 await fetch(`${SB}/storage/v1/object/project-images`, {
   method: "DELETE",
   headers: { apikey: ANON, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
