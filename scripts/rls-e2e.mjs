@@ -198,7 +198,37 @@ console.log("\n# Flexform");
 check("super admin lit les votes de Flexform", (await rest(superAdmin.jwt, "sondage_votes?select=poll_id")).status === 200);
 check("admin Flexfolio ne lit pas les participants de Flexform", (await rest(folioAdmin.jwt, "sondage_participants?select=id")).data.length === 0);
 
+console.log("\n# Flexform : sondages réservés au staff");
+// Sondages de test : réservé au staff et ouvert, réservé au staff hors du hub, sondage normal ouvert
+await rest(SERVICE, "sondage_polls?id=like.rls-*", { method: "DELETE" });
+const testPoll = (id, staffOnly, hub) => ({ id, kind: "choice", question: id, options: [{ id: "0", label: "Oui" }], staff_only: staffOnly, hub });
+await rest(SERVICE, "sondage_polls", { method: "POST", body: [testPoll("rls-staff", true, true), testPoll("rls-staff-off", true, false), testPoll("rls-public", false, true)] });
+const answer = (who, pollId, userId = who.id) =>
+  rest(who.jwt, "sondage_staff_votes", { method: "POST", body: { poll_id: pollId, user_id: userId, value: "0" }, prefer: "return=representation" });
+const staffVotes = (who) => rest(who.jwt, "sondage_staff_votes?select=user_id&poll_id=like.rls-*");
+
+check("staff Flexform répond à un sondage réservé au staff", (await answer(staff, "rls-staff")).status === 201);
+check("admin Flexform répond à un sondage réservé au staff", (await answer(formAdmin, "rls-staff")).status === 201);
+check("staff Flexform ne peut pas répondre en son nom à un sondage normal", refused(await answer(staff, "rls-public")));
+check("staff Flexform ne peut pas répondre à un sondage staff hors du hub", refused(await answer(staff, "rls-staff-off")));
+check("staff Flexform ne peut pas répondre au nom d'un autre compte", refused(await answer(staff, "rls-staff", superAdmin.id)));
+check("admin Flexfolio ne peut pas répondre à un sondage staff", refused(await answer(folioAdmin, "rls-staff")));
+check("visiteur ne lit rien dans sondage_staff_votes", refused(await staffVotes({ jwt: ANON })));
+check("visiteur ne peut pas répondre", refused(await rest(ANON, "sondage_staff_votes", { method: "POST", body: { poll_id: "rls-staff", user_id: staff.id, value: "0" } })));
+const seenByStaff = (await staffVotes(staff)).data;
+check("staff Flexform ne lit que ses propres réponses", seenByStaff.length === 1 && seenByStaff[0].user_id === staff.id, JSON.stringify(seenByStaff));
+check("admin Flexform lit toutes les réponses du staff", (await staffVotes(formAdmin)).data.length === 2);
+check("admin Flexfolio ne lit pas les réponses du staff", (await staffVotes(folioAdmin)).data.length === 0);
+const moved = await rest(staff.jwt, `sondage_staff_votes?poll_id=eq.rls-staff&user_id=eq.${staff.id}`, { method: "PATCH", body: { user_id: superAdmin.id }, prefer: "return=representation" });
+check("staff Flexform ne peut pas donner sa réponse à un autre compte", refused(moved), JSON.stringify(moved));
+check("staff Flexform ne peut pas effacer les réponses", refused(await rest(staff.jwt, "sondage_staff_votes?poll_id=eq.rls-staff", { method: "DELETE", prefer: "return=representation" })));
+const withReward = await rest(SERVICE, "sondage_polls?id=eq.rls-staff", { method: "PATCH", body: { reward: "1 café" } });
+check("un sondage réservé au staff refuse une récompense", withReward.status >= 400, `${withReward.status}`);
+await rest(SERVICE, "sondage_polls?id=eq.rls-staff", { method: "DELETE" });
+check("supprimer le sondage efface les réponses du staff", (await rest(SERVICE, "sondage_staff_votes?select=user_id&poll_id=eq.rls-staff")).data.length === 0);
+
 // Nettoyage
+await rest(SERVICE, "sondage_polls?id=like.rls-*", { method: "DELETE" });
 await rest(SERVICE, "projects?slug=like.rls-*", { method: "DELETE" });
 await rest(SERVICE, "suite_rate_limits?key=like.rls-*", { method: "DELETE" });
 await fetch(`${SB}/storage/v1/object/project-images`, {
