@@ -6,6 +6,7 @@ Gestion de l'équipe et des droits de **Flex Suite**, les applications qui parta
 |---|---|---|
 | Flexfolio | `void19845/flexfolio` | Portfolio et son administration |
 | Flexform | `void19845/flexform` | Sondages du BDE Montreuil |
+| Flexdesign | `void19845/flexdesign` | Design system, studio de visuels et moodboards (en construction) |
 | Flexstaff | ce dépôt | Ajouter du staff, transmettre le rôle admin, et socle commun de la base |
 
 Ce dépôt contient :
