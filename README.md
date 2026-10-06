@@ -27,6 +27,11 @@ Ce dépôt contient :
 Les règles RLS de chaque appli appellent `suite_has_app_role('appli', array['admin'])` (ou `staff`). C'est
 la base qui décide : une appli ne peut pas donner plus de droits que ceux de son admin, ni créer de super admin.
 
+Thèmes de Flexdesign (`design_themes`, `design_theme_colors`, `design_theme_fonts`, `design_fonts`,
+`design_font_files`, fonction `design_save_theme`, bucket public `design-fonts`) : lecture publique, visiteurs
+compris (les applis qui se lient à un thème le lisent avec la clé anon) ; écriture réservée aux admins de
+Flexdesign et aux super admins. Le staff Flexdesign lit seulement.
+
 ## Mettre en place la base de production
 
 1. Appliquer les migrations de `supabase/migrations/`, dans l'ordre : `npx supabase link` puis
@@ -72,8 +77,11 @@ npm run test:rls
 ```
 
 `scripts/rls-e2e.mjs` vérifie chaque règle directement dans la base, avec le jeton de chaque rôle
-(visiteur, staff et admin Flexform, admin Flexfolio, super admin). Il refuse de tourner sur une autre
-base que la base locale. `npm run db:reset` repart d'une base vide, `npm run db:stop` l'arrête.
+(visiteur, staff et admin Flexform, admin Flexfolio, super admin). Pour les thèmes de Flexdesign, il donne
+au staff Flexform un rôle staff Flexdesign le temps du test (retiré à la fin) et vérifie : lecture publique,
+écriture et `design_save_theme` refusées à tout autre qu'un admin Flexdesign, thème incomplet ou couleur
+invalide refusés par la base, envoi dans `design-fonts` réservé aux admins et limité aux types de police.
+Il refuse de tourner sur une autre base que la base locale. `npm run db:reset` repart d'une base vide, `npm run db:stop` l'arrête.
 
 ## L'appli Flexstaff
 

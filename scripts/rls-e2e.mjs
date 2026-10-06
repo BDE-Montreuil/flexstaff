@@ -229,6 +229,83 @@ check("un sondage réservé au staff refuse une récompense", withReward.status 
 await rest(SERVICE, "sondage_polls?id=eq.rls-staff", { method: "DELETE" });
 check("supprimer le sondage efface les réponses du staff", (await rest(SERVICE, "sondage_staff_votes?select=user_id&poll_id=eq.rls-staff")).data.length === 0);
 
+console.log("\n# Flexdesign : thèmes et polices");
+// Le staff Flexform reçoit un rôle staff Flexdesign le temps de cette partie (retiré au nettoyage)
+await rest(SERVICE, "design_themes?name=like.rls-*", { method: "DELETE" });
+await rest(SERVICE, "app_roles?on_conflict=user_id,app", { method: "POST", body: { user_id: staff.id, app: "flexdesign", role: "staff" }, prefer: "resolution=merge-duplicates" });
+check("staff Flexform est staff de Flexdesign pour ce test", (await roleOf(staff, "flexdesign")) === "staff");
+
+const roles = ["background", "surface", "text", "muted", "border", "primary", "onPrimary", "accent", "onAccent", "success", "warning", "danger"];
+const roleColors = (mode) => roles.map((name, position) => ({ mode, kind: "role", name, hex: `#${(position * 16).toString(16).padStart(2, "0")}3366`, position }));
+const theme = (name, colors, hasDark = false) => ({ p_theme: { name, has_dark: hasDark, colors, fonts: [] } });
+const saveTheme = (who, args) => rpc(who.jwt, "design_save_theme", args);
+
+const saved = await saveTheme(superAdmin, theme("rls-theme", roleColors("light")));
+const themeId = saved.data;
+check("super admin crée un thème par design_save_theme", saved.status === 200 && /^[0-9a-f-]{36}$/.test(themeId ?? ""), JSON.stringify(saved));
+
+for (const table of ["design_themes", "design_theme_colors", "design_fonts", "design_font_files", "design_theme_fonts"]) {
+  const read = await rest(ANON, `${table}?select=*&limit=1`);
+  check(`visiteur lit ${table}`, read.status === 200, `${read.status}`);
+}
+check("visiteur lit les 12 couleurs du thème", (await rest(ANON, `design_theme_colors?select=name&theme_id=eq.${themeId}`)).data?.length === 12);
+check("visiteur ne peut pas créer de thème", refused(await rest(ANON, "design_themes", { method: "POST", body: { name: "rls-pirate" }, prefer: "return=representation" })));
+const anonSave = await rpc(ANON, "design_save_theme", theme("rls-pirate", roleColors("light")));
+check("visiteur ne peut pas appeler design_save_theme", anonSave.status >= 400, `${anonSave.status}`);
+
+const staffSave = await saveTheme(staff, theme("rls-pirate", roleColors("light")));
+check("staff Flexdesign ne peut pas appeler design_save_theme", staffSave.status === 403 && staffSave.data?.code === "PT403", JSON.stringify(staffSave));
+check("staff Flexdesign ne peut pas créer de thème directement", refused(await rest(staff.jwt, "design_themes", { method: "POST", body: { name: "rls-pirate" }, prefer: "return=representation" })));
+check("staff Flexdesign ne peut pas modifier un thème", refused(await rest(staff.jwt, `design_themes?id=eq.${themeId}`, { method: "PATCH", body: { name: "rls-piraté" }, prefer: "return=representation" })));
+check("staff Flexdesign ne peut pas modifier les couleurs d'un thème", refused(await rest(staff.jwt, `design_theme_colors?theme_id=eq.${themeId}`, { method: "PATCH", body: { hex: "#000000" }, prefer: "return=representation" })));
+check("staff Flexdesign ne peut pas supprimer un thème", refused(await rest(staff.jwt, `design_themes?id=eq.${themeId}`, { method: "DELETE", prefer: "return=representation" })));
+const font = { family: "Rls Pirate", label: "rls-pirate", source: "catalog", catalog_id: "rls-pirate", category: "sans-serif", license: "OFL-1.1" };
+check("staff Flexdesign ne peut pas ajouter de police", refused(await rest(staff.jwt, "design_fonts", { method: "POST", body: font, prefer: "return=representation" })));
+const intact = (await rest(SERVICE, `design_themes?select=name&id=eq.${themeId}`)).data;
+check("le thème est intact après les tentatives du staff", intact?.[0]?.name === "rls-theme" && (await rest(SERVICE, `design_theme_colors?select=hex&theme_id=eq.${themeId}&hex=eq.%23000000`)).data.length === 0);
+for (const [who, label] of [[formAdmin, "admin Flexform"], [folioAdmin, "admin Flexfolio"]]) {
+  const call = await saveTheme(who, theme("rls-pirate", roleColors("light")));
+  check(`${label} ne peut pas appeler design_save_theme`, call.status === 403, `${call.status}`);
+  check(`${label} ne peut pas ajouter de police`, refused(await rest(who.jwt, "design_fonts", { method: "POST", body: font, prefer: "return=representation" })));
+}
+
+const incomplete = await saveTheme(superAdmin, theme("rls-incomplet", roleColors("light").slice(1)));
+check("thème refusé quand il manque un rôle, sans rien laisser en base", incomplete.status === 400 && incomplete.data?.code === "PT400" && (await rest(SERVICE, "design_themes?name=eq.rls-incomplet")).data.length === 0, JSON.stringify(incomplete));
+for (const hex of ["#ABC", "red", "#ABCDEF"]) {
+  const colors = roleColors("light");
+  colors[0].hex = hex;
+  const bad = await saveTheme(superAdmin, theme("rls-mauvais", colors));
+  check(`couleur ${hex} refusée par la base`, bad.status === 400 && bad.data?.code === "23514", JSON.stringify(bad));
+}
+const darkWithout = await saveTheme(superAdmin, theme("rls-mauvais", [...roleColors("light"), roleColors("dark")[0]]));
+check("couleur sombre refusée quand le thème n'a pas de variante sombre", darkWithout.status === 400 && darkWithout.data?.code === "PT400", JSON.stringify(darkWithout));
+const namedDark = await saveTheme(superAdmin, theme("rls-mauvais", [...roleColors("light"), ...roleColors("dark"), { mode: "dark", kind: "named", name: "brique", hex: "#aa3322", position: 0 }], true));
+check("couleur nommée refusée en mode sombre", namedDark.status === 400 && namedDark.data?.code === "23514", JSON.stringify(namedDark));
+check("aucun thème refusé n'est resté en base", (await rest(SERVICE, "design_themes?select=name&name=like.rls-*")).data.map((t) => t.name).join(",") === "rls-theme");
+
+// Stockage des polices : bucket public en lecture, écriture réservée aux admins Flexdesign
+const woff2 = Buffer.concat([Buffer.from("wOF2"), Buffer.alloc(12)]);
+async function uploadFont(bearer, name, type = "font/woff2") {
+  const res = await fetch(`${SB}/storage/v1/object/design-fonts/${name}`, {
+    method: "POST",
+    headers: { apikey: ANON, Authorization: `Bearer ${bearer}`, "Content-Type": type },
+    body: woff2,
+  });
+  return res.status;
+}
+const publicFont = async (name) => (await fetch(`${SB}/storage/v1/object/public/design-fonts/${name}`)).status;
+for (const [who, label, name] of [[{ jwt: ANON }, "visiteur", "rls-anon.woff2"], [staff, "staff Flexdesign", "rls-staff.woff2"], [formAdmin, "admin Flexform", "rls-form.woff2"]]) {
+  const status = await uploadFont(who.jwt, name);
+  check(`${label} n'envoie pas de police dans design-fonts`, status >= 400, `${status}`);
+}
+const fontUp = await uploadFont(superAdmin.jwt, "rls-font.woff2");
+check("super admin envoie une police woff2", fontUp === 200, `${fontUp}`);
+check("visiteur télécharge la police envoyée (bucket public)", (await publicFont("rls-font.woff2")) === 200);
+await fetch(`${SB}/storage/v1/object/design-fonts/rls-font.woff2`, { method: "DELETE", headers: { apikey: ANON, Authorization: `Bearer ${staff.jwt}` } });
+check("staff Flexdesign ne peut pas supprimer une police du stockage", (await publicFont("rls-font.woff2")) === 200);
+const pngUp = await uploadFont(superAdmin.jwt, "rls-image.png", "image/png");
+check("le bucket refuse un fichier image/png, même pour un super admin", pngUp >= 400, `${pngUp}`);
+
 // Nettoyage
 await rest(SERVICE, "sondage_polls?id=like.rls-*", { method: "DELETE" });
 await rest(SERVICE, "projects?slug=like.rls-*", { method: "DELETE" });
@@ -237,6 +314,14 @@ await fetch(`${SB}/storage/v1/object/project-images`, {
   method: "DELETE",
   headers: { apikey: ANON, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
   body: JSON.stringify({ prefixes: ["rls-folio.png", "rls-staff.png"] }),
+});
+await rest(SERVICE, "design_themes?name=like.rls-*", { method: "DELETE" });
+await rest(SERVICE, "design_fonts?label=like.rls-*", { method: "DELETE" });
+await rest(SERVICE, `app_roles?user_id=eq.${staff.id}&app=eq.flexdesign`, { method: "DELETE" });
+await fetch(`${SB}/storage/v1/object/design-fonts`, {
+  method: "DELETE",
+  headers: { apikey: ANON, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
+  body: JSON.stringify({ prefixes: ["rls-font.woff2", "rls-anon.woff2", "rls-staff.woff2", "rls-form.woff2", "rls-image.png"] }),
 });
 
 console.log(`\n${failures ? `${failures} échec(s)` : "Tout est passé."}`);
