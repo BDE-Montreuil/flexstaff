@@ -58,6 +58,27 @@ npm run role -- prenom.nom@exemple.fr flexform staff
 n'existe pas est créé, avec un mot de passe provisoire affiché une seule fois. `.env` doit contenir
 `SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` (clé secrète : uniquement sur ton poste).
 
+## Importer un export Flexfolio
+
+Un export « flexfolio-pour-ami » (`base-public.sql`, `base-storage.sql`, `supabase-storage-*.tgz`) se
+reprend avec `scripts/import-flexfolio.mjs`, **jamais en exécutant ses fichiers SQL** : `base-public.sql`
+recrée l'ancien schéma, où tout compte connecté peut modifier le portfolio.
+
+```bash
+cd chemin/vers/flexfolio-pour-ami
+tar -xzf supabase-storage-*.tgz
+cd chemin/vers/flexstaff
+node --env-file=.env scripts/import-flexfolio.mjs chemin/vers/flexfolio-pour-ami
+node --env-file=.env scripts/import-flexfolio.mjs chemin/vers/flexfolio-pour-ami --apply
+```
+
+Sans `--apply`, rien n'est écrit : le script vérifie l'export et la base cible (`setup.sql` appliqué, slugs
+déjà pris) et affiche ce qu'il ferait. Avec `--apply`, il envoie les fichiers dans le bucket `project-images`
+par l'API Storage, réécrit l'adresse des images vers `NEXT_PUBLIC_SUPABASE_URL` (sinon `SUPABASE_URL`), puis
+ajoute ou met à jour projets, images et réglages du site (relancer ne crée pas de doublon). Les anciennes
+colonnes `cv_*` de l'export ne sont pas reprises : le schéma actuel ne les a plus. Si les lignes sont
+importées par un fichier SQL (SQL Editor de Supabase), `--images-only` n'envoie que les fichiers.
+
 ## Base locale et tests
 
 Docker Desktop doit tourner.
