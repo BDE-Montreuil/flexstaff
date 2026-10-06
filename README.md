@@ -11,8 +11,9 @@ Gestion de l'équipe et des droits de **Flex Suite**, les applications qui parta
 
 Ce dépôt contient :
 
-- **tout le SQL de la base** partagée (`supabase/migrations/`) : tables de chaque appli, règles de
-  sécurité et droits communs. Les autres dépôts ne contiennent pas de schéma ;
+- **les droits communs** de la base partagée, dans `supabase/init.sql` : tables et fonctions `suite_*`,
+  `app_roles`. Chaque appli a son propre `supabase/init.sql` dans son dépôt (ses tables, ses règles de
+  sécurité, son inscription dans `suite_apps`), qui s'applique après celui-ci ;
 - les scripts de gestion des comptes (`npm run role`) et de test des droits (`npm run test:rls`) ;
 - l'appli Flexstaff : ajouter du staff et transmettre le rôle admin depuis une interface.
 
@@ -21,7 +22,7 @@ Ce dépôt contient :
 | Table | Contenu | Qui peut la modifier |
 |---|---|---|
 | `suite_super_admins` | Le ou les vrais admins de toute la suite : admins de toutes les applis | Personne depuis une appli : uniquement en SQL |
-| `suite_apps` | Les applis de la suite (`flexfolio`, `flexform`...) | Uniquement en SQL (migration) |
+| `suite_apps` | Les applis de la suite (`flexfolio`, `flexform`...) | Uniquement en SQL (`init.sql` de chaque appli) |
 | `app_roles` | Rôle `admin` ou `staff` d'un compte dans une appli | L'admin de cette appli, ou un super admin |
 
 Les règles RLS de chaque appli appellent `suite_has_app_role('appli', array['admin'])` (ou `staff`). C'est
@@ -30,13 +31,14 @@ la base qui décide : une appli ne peut pas donner plus de droits que ceux de so
 Thèmes de Flexdesign (`design_themes`, `design_theme_colors`, `design_theme_fonts`, `design_fonts`,
 `design_font_files`, fonction `design_save_theme`, bucket public `design-fonts`) : lecture publique, visiteurs
 compris (les applis qui se lient à un thème le lisent avec la clé anon) ; écriture réservée aux admins de
-Flexdesign et aux super admins. Le staff Flexdesign lit seulement.
+Flexdesign et aux super admins. Le staff Flexdesign lit seulement (schéma dans le dépôt flexdesign).
 
 ## Mettre en place la base de production
 
-1. Appliquer les migrations de `supabase/migrations/`, dans l'ordre : `npx supabase link` puis
-   `npx supabase db push`, ou coller chaque fichier dans le SQL Editor de Supabase. Les fichiers sont
-   idempotents quand il le faut (le schéma de Flexfolio déjà en place n'est pas recréé).
+1. Dans le SQL Editor de Supabase, exécuter dans cet ordre : `supabase/init.sql` de ce dépôt, puis
+   `supabase/init.sql` de flexfolio, flexform et flexdesign. Chaque fichier est idempotent : sur un projet
+   vierge il crée tout, sur une base existante il ajoute ce qui manque et remet les règles de sécurité à
+   jour, sans rien perdre. On relance le fichier d'une appli après chaque modification de son schéma.
 2. **Tout de suite après**, se déclarer super admin dans le SQL Editor (sinon plus personne ne peut
    modifier le portfolio) :
 
@@ -102,7 +104,19 @@ npm run test:rls
 au staff Flexform un rôle staff Flexdesign le temps du test (retiré à la fin) et vérifie : lecture publique,
 écriture et `design_save_theme` refusées à tout autre qu'un admin Flexdesign, thème incomplet ou couleur
 invalide refusés par la base, envoi dans `design-fonts` réservé aux admins et limité aux types de police.
-Il refuse de tourner sur une autre base que la base locale. `npm run db:reset` repart d'une base vide, `npm run db:stop` l'arrête.
+Il refuse de tourner sur une autre base que la base locale. `npm run db:reset` repart d'une base vide,
+`npm run db:setup` applique les fichiers à la base en place sans rien effacer : dans les deux cas
+`supabase/init.sql` de ce dépôt puis celui de flexfolio, flexform et flexdesign, lus dans les dépôts clonés
+à côté (dossier Flex Suite), sur la branche où ils se trouvent. `npm run db:stop` arrête la base.
+
+## Modifier le schéma
+
+Pas de fichiers de migration : un seul `supabase/init.sql` par dépôt. Les droits communs se modifient ici,
+les tables d'une appli dans le `init.sql` de son dépôt. Chaque fichier reste idempotent
+(`create table if not exists`, `add column if not exists`, `create or replace function`,
+`drop policy if exists` puis `create policy`...), pour marcher aussi bien sur une base vierge que sur la
+production existante. En local : `npm run db:setup` puis `npm run test:rls` ; en production : relancer le
+fichier modifié dans le SQL Editor (celui de flexstaff d'abord s'il a changé).
 
 ## L'appli Flexstaff
 
@@ -152,7 +166,8 @@ refusés. Il crée puis supprime un compte de test et remet les rôles comme au 
 
 ## Nouvelle appli
 
-1. Une migration qui ajoute l'appli à `suite_apps` et ses tables, avec des règles RLS basées sur
-   `suite_has_app_role('nouvelle-appli', ...)`.
-2. Ses règles dans `scripts/rls-e2e.mjs` (au moins un cas refusé par règle).
-3. Son propre dépôt, cloné dans le dossier Flex Suite à côté des autres.
+1. Son propre dépôt, cloné dans le dossier Flex Suite à côté des autres, avec un `supabase/init.sql` qui
+   vérifie que les droits de la suite existent, s'inscrit dans `suite_apps` et crée ses tables avec des
+   règles RLS basées sur `suite_has_app_role('nouvelle-appli', ...)` (modèle : celui de flexdesign).
+2. Ce fichier ajouté à `sql_paths` dans `supabase/config.toml` et à `npm run db:setup`.
+3. Ses règles dans `scripts/rls-e2e.mjs` (au moins un cas refusé par règle).

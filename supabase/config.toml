@@ -67,7 +67,9 @@ schema_paths = []
 enabled = true
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
-sql_paths = ["./seed.sql"]
+# Flex Suite : pas de migrations. Un init.sql idempotent par dépôt : les droits de la suite d'abord,
+# puis chaque appli (dépôts clonés côte à côte dans le dossier Flex Suite).
+sql_paths = ["./init.sql", "../../flexfolio/supabase/init.sql", "../../flexform/supabase/init.sql", "../../flexdesign/supabase/init.sql"]
 
 [db.network_restrictions]
 # Enable management of network restrictions.
