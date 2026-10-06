@@ -1,6 +1,6 @@
 /**
  * Contrat entre l'API de Flexstaff (src/app/api) et l'interface (src/components).
- * Les droits sont ceux de la base (tables suite_super_admins, suite_apps, app_roles) : voir supabase/migrations.
+ * Les droits sont ceux de la base (tables suite_super_admins, suite_apps, app_roles) : voir supabase/init.sql.
  */
 
 /** Rôle dans une appli de la suite */

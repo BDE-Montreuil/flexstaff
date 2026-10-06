@@ -9,7 +9,7 @@ import { HttpError } from "./errors";
  *   serviceDb()     clé service_role, ignore la RLS. Réservée aux actions des votants, que le
  *                   serveur vérifie lui-même (session par cookie).
  *   userDb(jeton)   jeton du compte admin ou staff connecté : la RLS de la base décide de ce
- *                   qu'il peut lire ou modifier (voir supabase/migrations).
+ *                   qu'il peut lire ou modifier (voir supabase/init.sql de chaque dépôt).
  */
 
 export interface SupabaseConfig {

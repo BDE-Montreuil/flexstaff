@@ -13,6 +13,7 @@
     "db:start": "supabase start -x studio,imgproxy,realtime,edge-runtime,logflare,vector,supavisor,mailpit,postgres-meta",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
+    "db:setup": "docker exec -i supabase_db_flexstaff psql -U postgres -q -v ON_ERROR_STOP=1 < supabase/init.sql && docker exec -i supabase_db_flexstaff psql -U postgres -q -v ON_ERROR_STOP=1 < ../flexfolio/supabase/init.sql && docker exec -i supabase_db_flexstaff psql -U postgres -q -v ON_ERROR_STOP=1 < ../flexform/supabase/init.sql && docker exec -i supabase_db_flexstaff psql -U postgres -q -v ON_ERROR_STOP=1 < ../flexdesign/supabase/init.sql",
     "role": "node --env-file-if-exists=.env scripts/role.mjs",
     "test:rls": "node --env-file-if-exists=.env scripts/rls-e2e.mjs"
   },
