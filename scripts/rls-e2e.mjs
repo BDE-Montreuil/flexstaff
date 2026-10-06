@@ -86,6 +86,8 @@ check("staff Flexform : staff dans flexform, rien dans flexfolio", (await roleOf
 check("admin Flexform : admin dans flexform, rien dans flexfolio", (await roleOf(formAdmin, "flexform")) === "admin" && (await roleOf(formAdmin, "flexfolio")) === null);
 check("admin Flexfolio : admin dans flexfolio, rien dans flexform", (await roleOf(folioAdmin, "flexfolio")) === "admin" && (await roleOf(folioAdmin, "flexform")) === null);
 check("super admin : admin partout", (await roleOf(superAdmin, "flexfolio")) === "admin" && (await roleOf(superAdmin, "flexform")) === "admin");
+check("Flexdesign : aucun rôle pour les comptes des autres applis", (await roleOf(staff, "flexdesign")) === null && (await roleOf(formAdmin, "flexdesign")) === null && (await roleOf(folioAdmin, "flexdesign")) === null);
+check("Flexdesign : super admin y est admin", (await roleOf(superAdmin, "flexdesign")) === "admin");
 check("super admin reconnu, les autres non", (await rpc(superAdmin.jwt, "suite_is_super_admin")).data === true && (await rpc(formAdmin.jwt, "suite_is_super_admin")).data === false);
 check("Flexform voit toujours son rôle par sondage_role()", (await rpc(staff.jwt, "sondage_role")).data === "staff");
 
