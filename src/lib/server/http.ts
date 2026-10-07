@@ -2,7 +2,7 @@ import "server-only";
 
 import { HttpError } from "./errors";
 import { Db, dbErrorToHttp, serviceDb, supabaseConfig, userDb } from "./supabase";
-import type { SuiteApp } from "@/lib/shared/types";
+import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, type SuiteApp } from "@/lib/shared/types";
 
 export { HttpError };
 
@@ -149,6 +149,47 @@ export async function signIn(req: Request, email: string, password: string): Pro
 
 export function signOut(req: Request): void {
   setTokens(req, null);
+}
+
+/** Nouveau mot de passe choisi par quelqu'un : longueur vérifiée ici, le reste par Supabase Auth. */
+export function parseNewPassword(value: unknown): string {
+  const password = typeof value === "string" ? value : "";
+  if (password.length < MIN_PASSWORD_LENGTH) throw new HttpError(400, `Mot de passe trop court : ${MIN_PASSWORD_LENGTH} caractères minimum.`);
+  if (Buffer.byteLength(password) > MAX_PASSWORD_LENGTH) throw new HttpError(400, `Mot de passe trop long : ${MAX_PASSWORD_LENGTH} octets maximum.`);
+  return password;
+}
+
+/** Mot de passe refusé par Supabase Auth (trop faible, identique à l'ancien...) : 400 avec un message lisible. */
+export async function passwordRefused(res: Response): Promise<HttpError | null> {
+  if (res.status !== 422 && res.status !== 400) return null;
+  const err = (await res.json().catch(() => ({}))) as { error_code?: string; code?: string };
+  const code = err.error_code ?? err.code;
+  if (code === "same_password") return new HttpError(400, "Le nouveau mot de passe doit être différent de l'ancien.");
+  if (code === "weak_password") return new HttpError(400, "Mot de passe trop faible.");
+  return null;
+}
+
+/**
+ * Change le mot de passe du compte connecté. L'actuel est vérifié par une connexion (même limite de tentatives
+ * que la connexion), puis le changement est fait avec le jeton de cette nouvelle session, qui remplace l'ancienne.
+ * 400 (et non 401) si l'actuel est faux : la session reste ouverte.
+ */
+export async function changePassword(req: Request, ctx: AdminContext, current: unknown, next: unknown): Promise<void> {
+  const password = parseNewPassword(next);
+  if (typeof current !== "string" || !current) throw new HttpError(400, "Mot de passe actuel requis.");
+  await rateLimit(req, "login", 10);
+  const tokens = await authRequest("password", { email: ctx.email, password: current });
+  if (!tokens) throw new HttpError(400, "Mot de passe actuel incorrect.");
+
+  const cfg = supabaseConfig();
+  const res = await fetch(`${cfg.url}/auth/v1/user`, {
+    method: "PUT",
+    headers: { apikey: cfg.anonKey, Authorization: `Bearer ${tokens.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw (await passwordRefused(res)) ?? new Error(`Changement de mot de passe refusé par Supabase Auth (${res.status})`);
+  setTokens(req, tokens);
 }
 
 /**

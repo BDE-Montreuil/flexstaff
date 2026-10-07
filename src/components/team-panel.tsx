@@ -2,11 +2,13 @@
 
 import { useEffect, useEffectEvent, useState } from "react";
 import { AddMemberForm } from "@/components/add-member-form";
+import { OwnPasswordForm } from "@/components/own-password-form";
 import { PasswordNotice, type CreatedAccount } from "@/components/password-notice";
+import { ResetPasswordForm } from "@/components/reset-password-form";
 import { TeamCard } from "@/components/team-card";
 import { signOut as endSession } from "@/lib/client/account";
 import { ApiError, api, isAuthError } from "@/lib/client/api";
-import type { Me, Team } from "@/lib/shared/types";
+import type { Me, Member, Team } from "@/lib/shared/types";
 
 /**
  * Lance une action sur l'équipe ; renvoie true si elle a réussi. L'équipe est rechargée ensuite (succès ou erreur).
@@ -29,6 +31,9 @@ export function TeamPanel({ account, onSignedOut }: { account: Me; onSignedOut: 
   /** Déconnexion en cours : plus aucun appel au serveur */
   const [stopped, setStopped] = useState(false);
   const [created, setCreated] = useState<CreatedAccount | null>(null);
+  /** Membre dont l'admin change le mot de passe, dans l'onglet de cette appli */
+  const [resetFor, setResetFor] = useState<{ app: string; member: Member } | null>(null);
+  const [ownPassword, setOwnPassword] = useState(false);
   /** Objet neuf à chaque message : le même message affiché deux fois relance les 3,5 s */
   const [toast, setToast] = useState<{ text: string } | null>(null);
 
@@ -120,6 +125,9 @@ export function TeamPanel({ account, onSignedOut }: { account: Me; onSignedOut: 
         <div className="topbar-actions">
           <span className="muted small">{me.email}</span>
           {me.superAdmin && <span className="badge role-super">Super admin</span>}
+          <button type="button" className="btn ghost small" onClick={() => setOwnPassword(true)}>
+            Mon mot de passe
+          </button>
           <button type="button" className="btn ghost small" onClick={() => signOut()}>
             Déconnexion
           </button>
@@ -136,7 +144,7 @@ export function TeamPanel({ account, onSignedOut }: { account: Me; onSignedOut: 
       <div className="layout">
         <main>
           {shown ? (
-            <TeamCard team={shown} me={me} busy={busy} run={run} />
+            <TeamCard team={shown} me={me} busy={busy} run={run} onResetPassword={(member) => setResetFor({ app, member })} />
           ) : (
             <div className="card">
               {error ? (
@@ -150,6 +158,19 @@ export function TeamPanel({ account, onSignedOut }: { account: Me; onSignedOut: 
           )}
         </main>
         <aside>
+          {ownPassword && <OwnPasswordForm busy={busy} run={run} onClose={() => setOwnPassword(false)} flash={flash} />}
+          {current && resetFor?.app === current.app && (
+            <ResetPasswordForm
+              key={resetFor.member.userId}
+              app={current}
+              member={resetFor.member}
+              busy={busy}
+              run={run}
+              onGenerated={setCreated}
+              onClose={() => setResetFor(null)}
+              flash={flash}
+            />
+          )}
           {current && (
             <AddMemberForm
               key={current.app}

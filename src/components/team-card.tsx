@@ -7,8 +7,20 @@ import type { Me, Member, Role, Team } from "@/lib/shared/types";
 
 export const ROLE_LABEL: Record<Member["role"], string> = { super: "Super admin", admin: "Admin", staff: "Staff" };
 
-/** Équipe d'une appli : rôle de chaque membre et actions (promouvoir, rétrograder, retirer, transmettre). */
-export function TeamCard({ team, me, busy, run }: { team: Team; me: Me; busy: boolean; run: Run }) {
+/** Équipe d'une appli : rôle de chaque membre et actions (promouvoir, rétrograder, retirer, transmettre, mot de passe). */
+export function TeamCard({
+  team,
+  me,
+  busy,
+  run,
+  onResetPassword,
+}: {
+  team: Team;
+  me: Me;
+  busy: boolean;
+  run: Run;
+  onResetPassword: (member: Member) => void;
+}) {
   function setRole(m: Member, role: Role | null): void {
     // Confirmation pour un retrait, ou pour un changement de son propre rôle (l'accès peut se fermer)
     const question = role === null ? `Retirer ${m.email} de l'équipe ${team.name} ?` : `Passer ${role} dans ${team.name} ?`;
@@ -67,6 +79,11 @@ export function TeamCard({ team, me, busy, run }: { team: Team; me: Me; busy: bo
                         {m.role === "staff" && !m.me && (
                           <button type="button" className="btn warn small" disabled={busy} onClick={() => handover(m)}>
                             Transmettre
+                          </button>
+                        )}
+                        {!m.me && (
+                          <button type="button" className="btn ghost small" disabled={busy} onClick={() => onResetPassword(m)}>
+                            Mot de passe
                           </button>
                         )}
                         <button type="button" className="btn ghost danger small" disabled={busy} onClick={() => setRole(m, null)}>

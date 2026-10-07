@@ -24,9 +24,11 @@ create extension if not exists "pgcrypto";
 --                       de cette appli seulement ; un super admin est admin de toutes les applis.
 --
 -- Erreurs renvoyées par les fonctions (PostgREST traduit PTxxx en statut HTTP xxx) :
+--   PT400 'Change ton propre mot de passe depuis « Mon mot de passe ».'
 --   PT403 'Réservé aux admins de cette appli.' / 'Réservé aux admins.'
---   PT404 'Appli inconnue.'
---   PT409 'Il doit rester au moins un admin dans cette appli.'
+--   PT404 'Appli inconnue.' / 'Membre introuvable.'
+--   PT409 'Il doit rester au moins un admin dans cette appli.' / 'Les super admins se gèrent en SQL.' /
+--         'Ce membre a aussi un rôle dans une appli que tu n''administres pas ...'
 
 create table if not exists public.suite_apps (
   app text primary key check (app ~ '^[a-z][a-z0-9-]{1,30}$'),
@@ -175,6 +177,44 @@ end
 $$;
 revoke execute on function public.suite_user_id_by_email(text) from public, anon;
 grant execute on function public.suite_user_id_by_email(text) to authenticated;
+
+-- Mot de passe d'un membre (Flexstaff) : vérifie, avec le jeton du compte connecté, qu'il peut changer le mot
+-- de passe de ce compte, et renvoie son e-mail. Le serveur n'appelle l'API d'administration de Supabase Auth
+-- (clé service_role) qu'ensuite. Le compte doit avoir au moins un rôle, et chacun de ses rôles doit être dans
+-- une appli que le compte connecté administre : sinon un admin d'une appli prendrait la main sur un compte qui
+-- a plus de droits que lui. Jamais un super admin (géré en SQL). Son propre mot de passe se change en donnant
+-- l'actuel (POST /api/auth/password), pas ici.
+create or replace function public.suite_password_reset_target(p_user uuid)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  if not exists (select 1 from public.suite_apps a where public.suite_app_role(a.app) = 'admin') then
+    raise sqlstate 'PT403' using message = 'Réservé aux admins.';
+  end if;
+  if p_user = auth.uid() then
+    raise sqlstate 'PT400' using message = 'Change ton propre mot de passe depuis « Mon mot de passe ».';
+  end if;
+  if exists (select 1 from public.suite_super_admins s where s.user_id = p_user) then
+    raise sqlstate 'PT409' using message = 'Les super admins se gèrent en SQL.';
+  end if;
+  if not exists (select 1 from public.app_roles r where r.user_id = p_user) then
+    raise sqlstate 'PT404' using message = 'Membre introuvable.';
+  end if;
+  if exists (
+    select 1 from public.app_roles r
+    where r.user_id = p_user and public.suite_app_role(r.app) is distinct from 'admin'
+  ) then
+    raise sqlstate 'PT409' using message = 'Ce membre a aussi un rôle dans une appli que tu n''administres pas : demande à un super admin.';
+  end if;
+  return (select u.email::text from auth.users u where u.id = p_user);
+end
+$$;
+revoke execute on function public.suite_password_reset_target(uuid) from public, anon;
+grant execute on function public.suite_password_reset_target(uuid) to authenticated;
 
 -- Compte une tentative et renvoie le nombre de tentatives dans la fenêtre en cours.
 create or replace function public.suite_hit_rate_limit(p_key text, p_window_seconds int)

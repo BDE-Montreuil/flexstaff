@@ -2,14 +2,15 @@
 
 import { useState } from "react";
 
-/** Compte créé par l'ajout d'un membre, avec son mot de passe provisoire */
+/** Compte créé par l'ajout d'un membre, ou dont l'admin a fait générer un nouveau mot de passe (reset) */
 export interface CreatedAccount {
   email: string;
   appName: string;
   password: string;
+  reset?: boolean;
 }
 
-/** Mot de passe provisoire d'un compte créé : affiché une seule fois, jusqu'à ce que l'admin ferme la carte. */
+/** Mot de passe provisoire d'un compte créé ou changé : affiché une seule fois, jusqu'à ce que l'admin ferme la carte. */
 export function PasswordNotice({ account, onClose }: { account: CreatedAccount; onClose: () => void }) {
   const [copy, setCopy] = useState<"" | "done" | "failed">("");
 
@@ -25,13 +26,13 @@ export function PasswordNotice({ account, onClose }: { account: CreatedAccount; 
   return (
     <section className="card notice" aria-labelledby="notice-title">
       <div className="table-head">
-        <h2 id="notice-title">Compte créé</h2>
+        <h2 id="notice-title">{account.reset ? "Mot de passe changé" : "Compte créé"}</h2>
         <button type="button" className="btn ghost small" onClick={onClose}>
           Fermer
         </button>
       </div>
       <p>
-        {"Compte créé pour "}
+        {account.reset ? "Nouveau mot de passe de " : "Compte créé pour "}
         <strong>{account.email}</strong>
         {` (${account.appName}). Mot de passe provisoire :`}
       </p>

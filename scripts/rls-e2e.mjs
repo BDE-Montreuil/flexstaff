@@ -157,6 +157,25 @@ for (const [who, label] of [[{ jwt: ANON }, "visiteur"], [staff, "staff Flexform
 }
 check("le compteur n'a pas bougé", (await hit()) === 3);
 
+console.log("\n# Mot de passe d'un membre (Flexstaff)");
+const resetTarget = (who, userId) => rpc(who.jwt, "suite_password_reset_target", { p_user: userId });
+check("visiteur ne peut pas appeler suite_password_reset_target", (await rpc(ANON, "suite_password_reset_target", { p_user: staff.id })).status >= 400);
+check("staff Flexform ne peut pas changer un mot de passe", (await resetTarget(staff, formAdmin.id)).status === 403);
+const staffTarget = await resetTarget(formAdmin, staff.id);
+check("admin Flexform peut changer le mot de passe de son staff", staffTarget.status === 200 && staffTarget.data?.toLowerCase() === env.TEST_STAFF_EMAIL.toLowerCase(), JSON.stringify(staffTarget));
+check("admin Flexform ne peut pas changer le mot de passe d'un super admin", (await resetTarget(formAdmin, superAdmin.id)).status === 409);
+check("admin Flexform ne peut pas changer le mot de passe de l'admin Flexfolio", (await resetTarget(formAdmin, folioAdmin.id)).status === 409);
+check("admin Flexfolio ne peut pas changer le mot de passe du staff Flexform", (await resetTarget(folioAdmin, staff.id)).status === 409);
+check("son propre mot de passe refusé par cette fonction", (await resetTarget(formAdmin, formAdmin.id)).status === 400);
+check("compte sans rôle refusé, même pour un super admin", (await resetTarget(superAdmin, "00000000-0000-0000-0000-000000000000")).status === 404);
+check("super admin peut changer le mot de passe des comptes de chaque appli", (await resetTarget(superAdmin, staff.id)).status === 200 && (await resetTarget(superAdmin, folioAdmin.id)).status === 200);
+const twoApps = sqlRolledBack([
+  `insert into public.app_roles (user_id, app, role) values ('${staff.id}', 'flexfolio', 'staff');`,
+  ...asUser(formAdmin),
+  `select public.suite_password_reset_target('${staff.id}');`,
+]);
+check("admin Flexform ne peut pas changer le mot de passe d'un staff qui a aussi un rôle dans Flexfolio", !twoApps.ok && twoApps.out.includes("PT409"), twoApps.out);
+
 console.log("\n# Garde du dernier admin");
 // Appli de test créée dans chaque transaction, puis annulée : les comptes de test et les super admins ne changent pas.
 const garde = (roles) => [
