@@ -128,12 +128,18 @@ connexion). Chaque admin ne voit que les applis qu'il administre ; un super admi
 - promouvoir, rétrograder ou retirer un membre ;
 - transmettre son rôle admin à un membre : il devient admin, l'ancien admin devient staff (un super admin
   le reste) ;
+- changer le mot de passe d'un membre : saisi par l'admin, ou généré et affiché une seule fois si le champ reste
+  vide. Seulement si **tous** les rôles du membre sont dans des applis que l'admin administre (un admin Flexform
+  ne peut pas prendre la main sur un compte qui a aussi un rôle dans Flexfolio) ; jamais pour un super admin.
+  Un mot de passe actuel ne peut pas être affiché : Supabase Auth n'en garde qu'une empreinte (bcrypt) ;
+- « Mon mot de passe » : changer le sien, en donnant l'actuel ;
 - les super admins apparaissent dans chaque équipe mais ne se gèrent qu'en SQL.
 
 La base décide de tout avec le jeton du compte connecté (fonctions `suite_*`, RLS de `app_roles`) ; elle
 refuse de retirer le dernier admin d'une appli quand aucun super admin n'existe. Les droits sont relus à
 chaque requête : un admin rétrogradé perd l'accès aussitôt. La clé `service_role` ne sert qu'à créer un
-compte (après vérification du rôle avec le jeton du compte) et à limiter les tentatives.
+compte ou changer le mot de passe d'un membre (après vérification des droits avec le jeton du compte, fonction
+`suite_password_reset_target` pour le mot de passe) et à limiter les tentatives.
 
 ### Lancer
 
@@ -153,15 +159,15 @@ Avec l'appli lancée et la base locale :
 node --env-file=.env scripts/app-e2e.mjs http://localhost:8786
 ```
 
-`scripts/app-e2e.mjs` vérifie chaque route (connexion, équipe, ajout, rôles, transmission), dont les cas
-refusés. Il crée puis supprime un compte de test et remet les rôles comme au départ.
+`scripts/app-e2e.mjs` vérifie chaque route (connexion, équipe, ajout, rôles, transmission, mots de passe), dont
+les cas refusés. Il crée puis supprime un compte de test et remet les rôles comme au départ.
 
 ### Variables d'environnement
 
 | Variable | Rôle |
 |---|---|
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` | Projet Supabase (les noms `NEXT_PUBLIC_*` marchent aussi) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Clé serveur : création de comptes et limite de tentatives |
+| `SUPABASE_SERVICE_ROLE_KEY` | Clé serveur : création de comptes, mot de passe d'un membre et limite de tentatives |
 | `TEST_*` | Comptes de test, pour `npm run test:rls` et `scripts/app-e2e.mjs` uniquement |
 
 ## Nouvelle appli

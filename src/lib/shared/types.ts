@@ -45,12 +45,26 @@ export interface AddMemberResult {
 }
 
 /**
+ * POST /api/team/password { userId, password? } : change le mot de passe d'un membre (tous ses rôles doivent être
+ * dans des applis administrées par le compte connecté). password vide : un mot de passe est généré.
+ */
+export interface ResetPasswordResult {
+  email: string;
+  /** Mot de passe généré, affiché une seule fois (absent si l'admin l'a saisi) */
+  temporaryPassword?: string;
+}
+
+/**
  * Autres routes (réponse { ok: true }) :
  *   POST /api/team/role     { app, userId, role: Role | null }   promouvoir, rétrograder, retirer (null)
  *   POST /api/team/handover { app, userId }                      transmettre le rôle admin : userId devient
  *                                                                admin, le compte connecté devient staff
  *                                                                (sauf super admin, qui le reste)
+ *   POST /api/auth/password { current, password }                changer son propre mot de passe
  *   POST /api/auth/logout
  * Erreurs : { error: string } avec le code HTTP (401 non connecté, 403 droits, 404, 409 conflit, 429).
  */
 export const MAX_EMAIL_LENGTH = 254;
+/** Longueur d'un mot de passe choisi (72 : limite de bcrypt, utilisé par Supabase Auth) */
+export const MIN_PASSWORD_LENGTH = 8;
+export const MAX_PASSWORD_LENGTH = 72;

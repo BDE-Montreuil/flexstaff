@@ -92,6 +92,32 @@ check("admin Flexform ne peut pas ajouter dans Flexfolio", (await formAdmin("/ap
 check("promouvoir admin", (await formAdmin("/api/team/role", { method: "POST", body: { app: "flexform", userId: newId, role: "admin" } })).status === 200 &&
   roleIn(await formAdmin("/api/team?app=flexform"), NEW_EMAIL) === "admin");
 check("le nouvel admin entre dans Flexstaff", (await login(newcomer, NEW_EMAIL, added.data.temporaryPassword)).status === 200);
+
+console.log("\n# Mots de passe");
+// Vérifié directement auprès de Supabase Auth : les connexions à l'appli sont limitées à 10 par minute
+const canSignIn = async (email, password) =>
+  (await fetch(`${SB}/auth/v1/token?grant_type=password`, { method: "POST", headers: { apikey: env.SUPABASE_ANON_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) })).ok;
+const changeOwn = (who, current, password) => who("/api/auth/password", { method: "POST", body: { current, password } });
+const ownWrong = await changeOwn(newcomer, "faux", "Nouveau-mdp-1");
+check("mot de passe actuel faux : refusé, la session reste ouverte", ownWrong.status === 400 && (await newcomer("/api/auth/me")).status === 200, JSON.stringify(ownWrong));
+check("nouveau mot de passe trop court refusé", (await changeOwn(newcomer, added.data.temporaryPassword, "court")).status === 400);
+const ownOk = await changeOwn(newcomer, added.data.temporaryPassword, "Nouveau-mdp-1");
+check("un admin change son propre mot de passe, sa session continue", ownOk.status === 200 && (await newcomer("/api/auth/me")).status === 200, JSON.stringify(ownOk));
+check("le nouveau mot de passe marche, l'ancien non", (await canSignIn(NEW_EMAIL, "Nouveau-mdp-1")) && !(await canSignIn(NEW_EMAIL, added.data.temporaryPassword)));
+check("changer son mot de passe sans connexion : 401", (await changeOwn(browser(), "x", "Nouveau-mdp-1")).status === 401);
+
+const reset = (who, userId, password) => who("/api/team/password", { method: "POST", body: { userId, password } });
+const generated = await reset(formAdmin, newId);
+check("admin Flexform change le mot de passe d'un membre : généré, renvoyé une fois", generated.status === 200 && generated.data.email === NEW_EMAIL && typeof generated.data.temporaryPassword === "string", JSON.stringify(generated));
+check("le mot de passe généré marche, l'ancien non", (await canSignIn(NEW_EMAIL, generated.data.temporaryPassword)) && !(await canSignIn(NEW_EMAIL, "Nouveau-mdp-1")));
+const typed = await reset(formAdmin, newId, "Choisi-par-admin-1");
+check("mot de passe saisi par l'admin : non renvoyé, et il marche", typed.status === 200 && typed.data.temporaryPassword === undefined && (await canSignIn(NEW_EMAIL, "Choisi-par-admin-1")), JSON.stringify(typed));
+check("mot de passe saisi trop court refusé", (await reset(formAdmin, newId, "court")).status === 400);
+check("identifiant de membre invalide refusé", (await reset(formAdmin, "pas-un-id")).status === 400);
+check("admin Flexform ne peut pas changer le mot de passe d'un super admin", (await reset(formAdmin, superId)).status === 409);
+check("admin Flexfolio ne peut pas changer le mot de passe d'un membre de Flexform", (await reset(folioAdmin, newId)).status === 409);
+check("son propre mot de passe refusé par cette route", (await reset(formAdmin, formAdminId)).status === 400);
+check("changer un mot de passe sans connexion : 401", (await reset(browser(), newId)).status === 401);
 check("rétrograder en staff", (await formAdmin("/api/team/role", { method: "POST", body: { app: "flexform", userId: newId, role: "staff" } })).status === 200);
 check("la session du rétrogradé est coupée aussitôt", (await newcomer("/api/team?app=flexform")).status === 403);
 check("impossible de modifier un super admin", (await formAdmin("/api/team/role", { method: "POST", body: { app: "flexform", userId: superId, role: "staff" } })).status === 409);

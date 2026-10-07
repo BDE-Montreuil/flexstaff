@@ -1,18 +1,18 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
-import { MAX_EMAIL_LENGTH, type AddMemberResult, type Member, type Role, type Team } from "@/lib/shared/types";
+import { MAX_EMAIL_LENGTH, type AddMemberResult, type Member, type ResetPasswordResult, type Role, type Team } from "@/lib/shared/types";
 import { HttpError } from "./errors";
-import { rateLimit, str, type AdminContext } from "./http";
+import { parseNewPassword, passwordRefused, rateLimit, str, type AdminContext } from "./http";
 import { eq, supabaseConfig } from "./supabase";
 
 /*
  * Équipe d'une appli : lecture et changements de rôles dans app_roles.
  * Tout passe par ctx.db (jeton du compte connecté) : la base vérifie elle-même que le compte est admin
  * de l'appli (fonctions suite_*, RLS de app_roles, trigger du dernier admin).
- * Seule exception : la création d'un compte, que l'API d'administration de Supabase Auth n'accepte
- * qu'avec la clé service_role. Elle n'est utilisée qu'après avoir vérifié, avec le jeton du compte,
- * qu'il est admin de l'appli.
+ * Seules exceptions : la création d'un compte et le changement du mot de passe d'un membre, que l'API
+ * d'administration de Supabase Auth n'accepte qu'avec la clé service_role. Elle n'est utilisée qu'après
+ * avoir vérifié, avec le jeton du compte, qu'il en a le droit.
  */
 
 interface TeamRow {
@@ -104,9 +104,11 @@ function authAdmin(path: string, init: { method: string; body?: object }): Promi
   });
 }
 
+const temporaryPassword = (): string => randomBytes(12).toString("base64url");
+
 /** Crée un compte confirmé avec un mot de passe provisoire. */
 async function createAccount(email: string): Promise<{ id: string; password: string }> {
-  const password = randomBytes(12).toString("base64url");
+  const password = temporaryPassword();
   const res = await authAdmin("users", { method: "POST", body: { email, password, email_confirm: true } });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error_code?: string; code?: string };
@@ -175,4 +177,21 @@ export async function handover(ctx: AdminContext, body: Record<string, unknown>)
   const promoted = await ctx.db.update("app_roles", `user_id=${eq(userId)}&app=${eq(app)}`, { role: "admin" });
   if (!promoted.length) throw new HttpError(404, NOT_FOUND);
   if (!superAdmin) await ctx.db.update("app_roles", `user_id=${eq(ctx.userId)}&app=${eq(app)}`, { role: "staff" });
+}
+
+/**
+ * POST /api/team/password : change le mot de passe d'un membre, saisi par l'admin ou généré (password vide).
+ * La base vérifie d'abord, avec le jeton du compte, que chaque rôle du membre est dans une appli qu'il administre
+ * (suite_password_reset_target) ; seulement ensuite la clé service_role change le mot de passe.
+ */
+export async function resetPassword(req: Request, ctx: AdminContext, body: Record<string, unknown>): Promise<ResetPasswordResult> {
+  const userId = parseUserId(body.userId);
+  const typed = body.password === undefined || body.password === "" ? null : parseNewPassword(body.password);
+  await rateLimit(req, "password", 20);
+  const email = await ctx.db.rpc<string>("suite_password_reset_target", { p_user: userId });
+
+  const password = typed ?? temporaryPassword();
+  const res = await authAdmin(`users/${userId}`, { method: "PUT", body: { password } });
+  if (!res.ok) throw (await passwordRefused(res)) ?? new Error(`Changement de mot de passe refusé par Supabase Auth (${res.status})`);
+  return typed ? { email } : { email, temporaryPassword: password };
 }
